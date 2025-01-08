@@ -1,164 +1,94 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from email.mime.text import MIMEText
-from fastapi import HTTPException
-from dotenv import load_dotenv
+from fastapi import FastAPI
 import requests
-import save_data
-import get_token
-import logging
-import smtplib
-import os
+import data_base
+import gettoken
+import send_email
 import asyncio
-
-load_dotenv()
-
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
-logging.basicConfig(
-    filename="api_logs.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-#iniciar api: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
-# mkdocs serve -a 127.0.0.1:9000 
+import os
+import uvicorn
+from hypercorn.config import Config
+from hypercorn.asyncio import serve
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 app = FastAPI(
-    title="API para la obtencion de datos generados por el aparato ArduinoUNOR4",
+    title="API para la obtención de datos generados por el aparato ArduinoUNOR4",
     version="1.0.0"
 )
 
-# log
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    logging.info(f"Solicitud entrante: {request.method} {request.url}")
-    save_data.log_to_db('INFO', f"Solicitud entrante: {request.method} {request.url}", str(request.url))
+# Endpoint base de la API de Arduino
+THING_ID = os.getenv("THING_ID")
+BASE_URL = f"https://api2.arduino.cc/iot/v2/things/{THING_ID}/properties"
 
-    response = await call_next(request)
+def send_email_once(function_name, error_message):
+    """Envía un correo solo si no se ha enviado previamente para un error dado."""
+    if not [function_name]:
+        send_email.send_mail(error_message)
+        [function_name] = True
 
-    logging.info(f"Llamada completada {response.status_code}")
-    save_data.log_to_db('INFO', f"Llamada completada: {response.status_code}", str(request.url), response.status_code)
-
-    return response
-
-# Montar archivos estáticos
-# app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# # Configurar plantillas
-# templates = Jinja2Templates(directory="templates")
-
-
-# @app.get("/", response_class=HTMLResponse)
-# async def read_root(request: Request):
-#     return templates.TemplateResponse("index.html", {"request": request})
-
-# Funcion obtener data
-@app.get("/data")
-async def get_data():
-    global sent_email
+# Función para obtener datos de la API
+@retry(stop=stop_after_attempt(5), wait=wait_fixed(120), reraise=True)
+def fetch_data():
     try:
-        url = f"https://api2.arduino.cc/iot/v2/things/{get_token.THING_ID}/properties"
+        url = BASE_URL
         headers = {
-            "Authorization": f"Bearer {get_token.get_access_token()}",
+            "Authorization": f"Bearer {gettoken.get_access_token()}",
             "Content-Type": "application/json"
         }
-        
-        # Hacer la solicitud a la API de Arduino
-        response = requests.get(url, headers=headers)
-
-        # Verificar si la solicitud fue exitosa
-        if response.status_code != 200:
-            error_message = f"Error en la API de Arduino: {response.status_code} - {response.text}"
-            logging.error(error_message)
-            
-            if not sent_email:
-                #send_error_email(error_message)
-                sent_email = True
-                save_data.log_to_db(error_message, endpoint="error", status_code=502)
-            raise HTTPException(status_code=502, detail="Error al conectar con la API Arduino. Posible estado Offline")
-        
-        # Parsear la respuesta de la API
-        data = response.json()
-        
-        if not data or data == "":
-            print("no hay data")
-            
-        return data
-
+        response = requests.get(url, headers=headers, timeout=10) 
+        response.raise_for_status()  # Lanza excepción para códigos de error HTTP
+        return response.json()
     except requests.exceptions.RequestException as e:
-        logging.error(f"La API tuvo un error en su solicitud: {str(e)}.")
-        raise HTTPException(status_code=502, detail="Error al obtener datos de la API de Arduino. Posible estado Offline")
-    except Exception as e:
-        logging.error(f"La API tuvo un error en su solicitud: {str(e)}.")
-        #send_error_email(f"Error al obtener datos de la API de Arduino: {str(e)}")  # Enviar correo si falla la API
-        raise HTTPException(status_code=500, detail="Error al obtener datos de la API de Arduino. Posible estado Offline")
+        # Registro detallado del error
+        error_message = f"Error al conectar con la API: {str(e)}"
+        data_base.log_to_db("ERROR", error_message, endpoint="/data", status_code=500)
+        send_email_once("fetch_data", error_message)
+        raise
 
-    # Función para enviar correos en caso de error
-def send_error_email(error_message):
+# Ruta para obtener datos manualmente
+@app.get("/data")
+async def get_data():
     try:
-        server = smtplib.SMTP_SSL('mail.starflowers.com.ec', 465)
-        server.login("pasante.sistemas@starflowers.com.ec", EMAIL_PASSWORD)
-        
-        # Crear el mensaje con el asunto y el cuerpo
-        subject = "Error en la API de Arduino de Cuarto Frio"
-        body = f"Ocurrió un error con la API: {error_message}"
-        
-        # Crear el objeto MIMEText para el correo
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        msg['From'] = "pasante.sistemas@starflowers.com.ec"
-        msg['To'] = "sistemas@starflowers.com.ec"
-        
-        # Enviar el correo
-        server.sendmail("pasante.sistemas@starflowers.com.ec", "sistemas@starflowers.com.ec", msg.as_string())
-        
-        logging.error("Se envió el correo de manera satisfactoria")
-        server.quit()
+        data = fetch_data()
+        if not data:
+            return {"message": "No se encontraron datos."}
+        return data
     except Exception as e:
-        logging.error(f"Error al enviar el correo: {str(e)}")
+        return {"error": f"Falló la obtención de datos: {str(e)}"}
 
-
-# Manejo global de excepciones
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logging.error(f"Excepción no controlada: {str(exc)}")
-    send_error_email("Ocurrio un error con el manejo de excepciones " + str(exc))
-    raise HTTPException(status_code=500, detail="Ocurrio un error interno en el servidor")
-
-# Hilo para guardar datos en la base de datos cada 1 minuto
+# Hilo asíncrono para guardar datos periódicamente
 async def save_data_periodically():
     while True:
         try:
-            # Obtener datos desde la API
-            data = await get_data()
-            # Guardar los datos en la base de datos
-            save_data.save_data_to_db(data)
-            print('Datos guardados en la base de datos.')
-            logging.info("Datos guardados en la base de datos.")
-            save_data.log_to_db('INFO', "Datos guardados en la base de datos.", endpoint='guardado', status_code=200)
-
-        except ValueError as e:
-            error_message = f"Error en el proceso periódico de guardado de datos: {str(e)}"
-            logging.error(error_message)
-            save_data.log_to_db('ERROR', error_message, endpoint='fallido', status_code=500)
-            send_error_email(error_message)
-
-        # Pausar 1 minuto antes de la siguiente ejecución de forma asincrónica
+            data = fetch_data()  # Llama a la función síncrona dentro de asyncio
+            data_base.save_data_to_db(data)
+            print(data)
+            print("Datos guardados correctamente.")
+        except Exception as e:
+            error_message = f"Error al guardar datos periódicos: {str(e)}"
+            print(error_message)
+            data_base.log_to_db("ERROR", error_message, endpoint="/save_periodic", status_code=500)
+            send_email_once("save_data_periodically", error_message)
         await asyncio.sleep(60)
 
-# Iniciar la tarea asíncrona en el evento de inicio de FastAPI
+# Evento de inicio
 @app.on_event("startup")
 async def startup_event():
     try:
-        # Crear la tarea asíncrona para el guardado periódico
         asyncio.create_task(save_data_periodically())
-        logging.info("Tarea asíncrona iniciada para guardar datos cada 1 minuto.")
-        save_data.log_to_db('INFO', "Tarea asíncrona iniciada para guardar datos cada 1 minuto.", endpoint='iniciado', status_code=200)
+        print("Iniciado el guardado periódico de datos.")
     except Exception as e:
-        error_message = f"Error al iniciar la tarea asíncrona: {str(e)}"
-        logging.error(error_message)
-        save_data.log_to_db('ERROR', error_message, endpoint='inicio_fallido', status_code=500)
-        send_error_email(error_message)
+        error_message = f"Error al iniciar el proceso periódico: {str(e)}"
+        data_base.log_to_db("ERROR", error_message, endpoint="/startup", status_code=500)
+        send_email.send_mail("startup_event", error_message)
+
+# Configuración del servidor
+config = Config()
+config.bind = ["0.0.0.0:9992"]
+
+# Función para ejecutar el servidor
+async def run():
+    await serve(app, config)
+
+if __name__ == "__main__":
+    #asyncio.run(run())
+    uvicorn.run("main:app", host="0.0.0.0", port=9992)

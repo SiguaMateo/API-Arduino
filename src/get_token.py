@@ -1,13 +1,13 @@
 from dotenv import load_dotenv
 import os
 import requests
-import save_data
+import data_base
+import send_email
 
 load_dotenv()
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-THING_ID = os.getenv("THING_ID")
 
 try:
     def get_access_token():
@@ -23,4 +23,5 @@ try:
 except Exception as e:
     error_message = f"Ocurrio un error con el token. Error: {e}"
     print(error_message)
-    save_data.log_to_db(error_message, status_code=500, endpoint="token error")
+    data_base.log_to_db(error_message, status_code=500, endpoint="token error")
+    send_email(error_message)
