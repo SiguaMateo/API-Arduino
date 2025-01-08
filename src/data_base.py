@@ -2,7 +2,7 @@ import os
 import pyodbc
 from datetime import datetime
 from dotenv import load_dotenv
-import send_email
+import mail
 
 # Cargar variables de entorno
 load_dotenv()
@@ -12,7 +12,7 @@ def log_and_notify_error(message, exception=None, endpoint=None, status_code=Non
     error_detail = f"{message}: {exception}" if exception else message
     print(error_detail)
     log_to_db("ERROR", error_detail, endpoint, status_code)
-    send_email.send_mail(error_detail)
+    mail.send_mail(error_detail)
 
 # Configuración de la conexión a SQL Server
 try:
@@ -40,6 +40,30 @@ def get_value_from_db(query):
         except Exception as e:
             print(f"Ocurrió un error al ejecutar la consulta: {e}")
             return None
+        
+url_token_query = """SELECT prm_valor
+                FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'url_token'"""
+
+url_aud_query = """SELECT prm_valor
+                FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'url_aud'"""
+
+cl_id_query = """SELECT prm_valor
+                FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'cl_id'"""
+
+cl_se_query  = """SELECT prm_valor
+                FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'cl_se'"""
+
+url_api_query = """SELECT prm_valor
+                FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'url_api'"""
+
+cl_th_query = """SELECT prm_valor
+    FROM dbo.Parametros_Sistema
+                WHERE id_grupo = 1 AND prm_descripcion = 'cl_th'"""
 
 user_mail_query = """SELECT prm_valor
                 FROM dbo.Parametros_Sistema
@@ -60,6 +84,24 @@ port_mail_query = """SELECT prm_valor
 target_mail_query = """SELECT prm_valor
                 FROM dbo.Parametros_Sistema
                 WHERE id_grupo = 8 AND prm_descripcion = 'mail_sis'"""
+
+def get_url_token():
+    return get_value_from_db(url_token_query)
+
+def get_url_aud():
+    return get_value_from_db(url_aud_query)
+
+def get_cl_id():
+    return get_value_from_db(cl_id_query)
+
+def get_cl_se():
+    return get_value_from_db(cl_se_query)
+
+def get_url_api():
+    return get_value_from_db(url_api_query)
+
+def get_cl_th():
+    return get_value_from_db(cl_th_query)
 
 def get_user_mail():
     return get_value_from_db(user_mail_query)

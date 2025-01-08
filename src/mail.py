@@ -24,7 +24,7 @@ def send_mail(message):
         server.login(user_mail, pass_mail)
 
         # Crear el mensaje
-        subject = "API WebScraping"
+        subject = "API Arduino"
         body = f"Mensaje: {message}"
         msg = MIMEText(body)
         msg['Subject'] = subject

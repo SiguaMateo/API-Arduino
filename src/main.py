@@ -1,51 +1,60 @@
+from fastapi import FastAPI
+import requests
+import asyncio
+import uvicorn
+import os
+
 try:
-    from fastapi import FastAPI
-    import requests
     import data_base
-    import gettoken
-    import send_email
-    import asyncio
-    import os
-    import uvicorn
-    from tenacity import retry, stop_after_attempt, wait_fixed
-except Exception as e:
-    print(f"ERROR, en la importacion de las librerias, {e}")
+    import get_token
+    import mail
+except ImportError as e:
+    raise ImportError(f"Error al importar módulos personalizados: {e}")
 
 app = FastAPI(
-    title="API para la obtención de datos generados por el aparato ArduinoUNOR4",
-    version="1.0.0"
+    title="API para la obtención de datos generados por el aparato ArduinoUNO R4",
+    description="Se utilizó FastAPI para obtener los datos de la nube utilizando Tokens",
+    version="1.0.1"
 )
 
-# Endpoint base de la API de Arduino
-THING_ID = os.getenv("THING_ID")
-BASE_URL = f"https://api2.arduino.cc/iot/v2/things/{THING_ID}/properties"
+sent_emails = set()
 
 def send_email_once(function_name, error_message):
-    """Envía un correo solo si no se ha enviado previamente para un error dado."""
-    if not [function_name]:
-        send_email.send_mail(error_message)
-        [function_name] = True
+    if function_name not in sent_emails:
+        mail.send_mail(error_message)
+        sent_emails.add(function_name)
 
-# Función para obtener datos de la API
-@retry(stop=stop_after_attempt(5), wait=wait_fixed(120), reraise=True)
+def get_url_base(thing_id):
+    url_base = data_base.get_url_api()
+    if not url_base:
+        error_message = "La URL base no es válida"
+        data_base.log_to_db("ERROR", error_message, endpoint="/get_url_base", status_code=400)
+        raise ValueError(error_message)
+    return url_base.format(THING_ID=thing_id)
+
 def fetch_data():
+    url = get_url_base(data_base.get_cl_th())
+    headers = {
+        "Authorization": f"Bearer {get_token.get_access_token()}",
+        "Content-Type": "application/json"
+    }
     try:
-        url = BASE_URL
-        headers = {
-            "Authorization": f"Bearer {gettoken.get_access_token()}",
-            "Content-Type": "application/json"
-        }
-        response = requests.get(url, headers=headers, timeout=10) 
-        response.raise_for_status()  # Lanza excepción para códigos de error HTTP
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException as e:
-        # Registro detallado del error
-        error_message = f"Error al conectar con la API: {str(e)}"
-        data_base.log_to_db("ERROR", error_message, endpoint="/data", status_code=500)
-        send_email_once("fetch_data", error_message)
-        raise
+    except requests.exceptions.Timeout:
+        error_message = "Timeout al conectar con la API."
+    except requests.exceptions.ConnectionError:
+        error_message = "Error de conexión con la API."
+    except requests.exceptions.HTTPError as e:
+        error_message = f"HTTPError: {e.response.status_code} {e.response.text}"
+    except Exception as e:
+        error_message = f"Error desconocido al conectar con la API: {str(e)}"
 
-# Ruta para obtener datos manualmente
+    data_base.log_to_db("ERROR", error_message, endpoint="/fetch_data", status_code=500)
+    send_email_once("fetch_data", error_message)
+    raise RuntimeError(error_message)
+
 @app.get("/data")
 async def get_data():
     try:
@@ -56,14 +65,13 @@ async def get_data():
     except Exception as e:
         return {"error": f"Falló la obtención de datos: {str(e)}"}
 
-# Hilo asíncrono para guardar datos periódicamente
 async def save_data_periodically():
     while True:
         try:
-            data = fetch_data()  # Llama a la función síncrona dentro de asyncio
-            data_base.save_data_to_db(data)
-            print(data)
-            print("Datos guardados correctamente.")
+            data = fetch_data()
+            if data:
+                await asyncio.to_thread(data_base.save_data_to_db, data)
+                print("informacion guardada " , data)
         except Exception as e:
             error_message = f"Error al guardar datos periódicos: {str(e)}"
             print(error_message)
@@ -71,16 +79,15 @@ async def save_data_periodically():
             send_email_once("save_data_periodically", error_message)
         await asyncio.sleep(60)
 
-# Evento de inicio
 @app.on_event("startup")
 async def startup_event():
     try:
         asyncio.create_task(save_data_periodically())
-        print("Iniciado el guardado periódico de datos.")
+        print("Proceso periódico de guardado iniciado correctamente.")
     except Exception as e:
         error_message = f"Error al iniciar el proceso periódico: {str(e)}"
         data_base.log_to_db("ERROR", error_message, endpoint="/startup", status_code=500)
-        send_email.send_mail("startup_event", error_message)
+        raise
 
 if __name__ == "__main__":
-    uvicorn.run("app:main", host="0.0.0.0", port=9992)
+    uvicorn.run("main:app", host="0.0.0.0", port=9992, reload=True)
