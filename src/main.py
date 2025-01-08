@@ -2,7 +2,7 @@ from fastapi import FastAPI
 import requests
 import asyncio
 import uvicorn
-import os
+import logging
 
 try:
     import data_base
@@ -10,6 +10,9 @@ try:
     import mail
 except ImportError as e:
     raise ImportError(f"Error al importar módulos personalizados: {e}")
+
+# Configuración básica del logger
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI(
     title="API para la obtención de datos generados por el aparato ArduinoUNO R4",
@@ -47,7 +50,12 @@ def fetch_data():
     except requests.exceptions.ConnectionError:
         error_message = "Error de conexión con la API."
     except requests.exceptions.HTTPError as e:
-        error_message = f"HTTPError: {e.response.status_code} {e.response.text}"
+        if response.status_code == 401:
+            error_message = "Error 401: Token no autorizado. Intentando renovarlo..."
+            logging.warning(error_message)
+            get_token.get_access_token()
+        else:
+            error_message = f"HTTPError: {e.response.status_code} {e.response.text}"
     except Exception as e:
         error_message = f"Error desconocido al conectar con la API: {str(e)}"
 
@@ -55,15 +63,25 @@ def fetch_data():
     send_email_once("fetch_data", error_message)
     raise RuntimeError(error_message)
 
-@app.get("/data")
+@app.get("/data", description="Endpoint principal, obtiene la información de Arduino")
 async def get_data():
-    try:
-        data = fetch_data()
-        if not data:
-            return {"message": "No se encontraron datos."}
-        return data
-    except Exception as e:
-        return {"error": f"Falló la obtención de datos: {str(e)}"}
+    MAX_RETRIES = 3
+    retry_count = 0
+    while retry_count < MAX_RETRIES:
+        try:
+            data = fetch_data()
+            if not data:
+                return {"message": "No se encontraron datos."}
+            return data
+        except Exception as e:
+            retry_count += 1
+            if retry_count < MAX_RETRIES:
+                print(f"Intento {retry_count} fallido: {str(e)} Reintentando")
+                await asyncio.sleep(2)
+            else:
+                error_message = f"Error tras {MAX_RETRIES} intentos realizados: {retry_count}"
+                print(error_message)
+                return {"error": f"Falló la obtención de datos: {str(e)}"}
 
 async def save_data_periodically():
     while True:
