@@ -1,14 +1,15 @@
-from fastapi import FastAPI
-import requests
-import data_base
-import gettoken
-import send_email
-import asyncio
-import os
-import uvicorn
-from hypercorn.config import Config
-from hypercorn.asyncio import serve
-from tenacity import retry, stop_after_attempt, wait_fixed
+try:
+    from fastapi import FastAPI
+    import requests
+    import data_base
+    import gettoken
+    import send_email
+    import asyncio
+    import os
+    import uvicorn
+    from tenacity import retry, stop_after_attempt, wait_fixed
+except Exception as e:
+    print(f"ERROR, en la importacion de las librerias, {e}")
 
 app = FastAPI(
     title="API para la obtención de datos generados por el aparato ArduinoUNOR4",
@@ -81,14 +82,5 @@ async def startup_event():
         data_base.log_to_db("ERROR", error_message, endpoint="/startup", status_code=500)
         send_email.send_mail("startup_event", error_message)
 
-# Configuración del servidor
-config = Config()
-config.bind = ["0.0.0.0:9992"]
-
-# Función para ejecutar el servidor
-async def run():
-    await serve(app, config)
-
 if __name__ == "__main__":
-    #asyncio.run(run())
-    uvicorn.run("main:app", host="0.0.0.0", port=9992)
+    uvicorn.run("app:main", host="0.0.0.0", port=9992)

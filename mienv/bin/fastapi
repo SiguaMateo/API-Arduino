@@ -1,4 +1,4 @@
-#!/home/mateo/Desktop/StarFlowers/FastAPI_Arduino/mienv/bin/python3
+#!/home/mateo/Escritorio/Starflowers/API/API-Arduino/mienv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

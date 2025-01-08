@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/home/mateo/Desktop/StarFlowers/FastAPI_Arduino/mienv"
+set -gx VIRTUAL_ENV "/home/mateo/Escritorio/Starflowers/API/API-Arduino/mienv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH
